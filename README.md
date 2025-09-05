@@ -33,7 +33,7 @@ In this lab, you will:
 
 ## 🗺️ Lab Topology
 
-![gre_over_ipsec](C:\Users\ppradela\Desktop\gre_over_ipsec.png)
+![GRE over IPsec Topology](gre_over_ipsec.png)
 
 ---
 
