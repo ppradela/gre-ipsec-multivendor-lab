@@ -206,7 +206,7 @@ Without these rules, the tunnel may establish partially or fail to pass GRE-enca
   - `ping -S 192.168.144.29 192.168.144.30`
   
 - On Palo Alto:  
-  - Monitor > IPsec → should show green  
+  - Network > IPsec Tunnels → should show green  
   - `ping source 192.168.144.30 host 192.168.144.29`  
   - `ping source 192.168.201.158 host 192.168.201.157`  
 
