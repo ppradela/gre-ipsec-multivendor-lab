@@ -11,10 +11,7 @@ This guide walks you through setting up **GRE over IPsec tunnels** between diffe
 1. [Introduction](#introduction)  
 2. [Lab Topology](#lab-topology)  
 3. [Prerequisites](#prerequisites)  
-4. [Configuration Steps](#configuration-steps)  
-   - Cisco IOS 
-   - OPNsense  
-   - Palo Alto  
+4. [Configuration Steps](#configuration-steps)
 5. [Verification](#verification)  
 6. [Troubleshooting](#troubleshooting)  
 7. [Author](#author)  
