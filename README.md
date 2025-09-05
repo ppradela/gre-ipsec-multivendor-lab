@@ -223,7 +223,7 @@ Without these rules, the tunnel may establish partially or fail to pass GRE-enca
 
 ## 👤 Author
 **Your Name**  
-- 💼 GitHub: [@yourusername](https://github.com/yourusername)  
+- 💼 GitHub: [@ppradela](https://github.com/ppradela)  
 - ✉️ Email: [przemyslaw.pradela@gmail.com](mailto:przemyslaw.pradela@gmail.com?subject=GRE%20over%20IPSec%20%20Guide)
 
 ---
