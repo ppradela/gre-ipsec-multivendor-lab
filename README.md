@@ -64,6 +64,7 @@ crypto ikev2 keyring IKE-KEYRING
  peer PA
   address 192.0.2.76
   pre-shared-key local IPSec-key
+  pre-shared-key remote IPSec-key
 
 crypto ikev2 profile IKE-PROFILE-PSK
  match address local 198.51.100.87
