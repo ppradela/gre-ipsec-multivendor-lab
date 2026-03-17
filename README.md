@@ -1,51 +1,65 @@
-# 🔐 GRE over IPsec Cisco/Palo Alto NGFW/OPNsense
+# GRE over IPsec — Cisco / OPNsense / Palo Alto Multivendor Lab
 
-This guide walks you through setting up **GRE over IPsec tunnels** between different firewall and routing platforms:  
-- **Cisco IOS Router**  
-- **OPNsense Firewall**  
-- **Palo Alto Firewall**  
+> **Step-by-step configuration guide for GRE over IPsec tunnels across three different network platforms. Built from a real lab deployment — no comparable multivendor guide exists in one place.**
 
----
-
-## 📑 Table of Contents
-1. [Introduction](#introduction)  
-2. [Lab Topology](#lab-topology)  
-3. [Prerequisites](#prerequisites)  
-4. [Configuration Steps](#configuration-steps)
-5. [Verification](#verification)  
-6. [Troubleshooting](#troubleshooting)  
-7. [Author](#author)  
+![Cisco](https://img.shields.io/badge/Cisco_IOS-Router-1BA0D7?logo=cisco)
+![OPNsense](https://img.shields.io/badge/OPNsense-Firewall-D94F00)
+![PaloAlto](https://img.shields.io/badge/Palo_Alto-NGFW-FA582D)
+![IKEv2](https://img.shields.io/badge/IKEv2-AES--256--GCM-green)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
-## 📝 Introduction
-**GRE over IPsec** combines the flexibility of **GRE tunnels** (to transport multiple protocols, enable routing updates, etc.) with the security of **IPsec encryption**.  
+## Why GRE over IPsec?
 
-In this lab, you will:  
-- Build GRE tunnels between Cisco, OPNsense, and Palo Alto devices.  
-- Protect GRE traffic with IPsec tunnels.  
-- Verify routing and encrypted transport.  
+**IPsec alone** encrypts traffic but only between two endpoints — it cannot carry routing protocols (OSPF, BGP) or multicast.
+**GRE alone** tunnels arbitrary protocols but provides no encryption.
+**GRE over IPsec** combines both: GRE provides the flexible transport layer, IPsec provides the encryption wrapper.
+
+This lab demonstrates a full mesh of GRE tunnels protected by IKEv2/IPsec between a Cisco IOS router, an OPNsense firewall, and a Palo Alto NGFW.
 
 ---
 
-## 🗺️ Lab Topology
+## Lab Topology
 
 ![GRE over IPsec Topology](gre_over_ipsec.png)
 
+### Address Plan
+
+| Device | Public IP | Tunnel to Cisco | Tunnel to OPNsense | Tunnel to Palo Alto |
+|---|---|---|---|---|
+| Cisco IOS | `198.51.100.87` | — | `192.168.73.197/30` | `192.168.201.157/30` |
+| OPNsense | `203.0.113.142` | `192.168.73.198/30` | — | `192.168.144.29/30` |
+| Palo Alto | `192.0.2.76` | `192.168.201.158/30` | `192.168.144.30/30` | — |
+
+### IKEv2 Parameters
+
+| Parameter | Value |
+|---|---|
+| IKE Encryption | AES-256-GCM |
+| PRF | SHA-384 |
+| DH Group | Group 20 (NIST P-384) |
+| Authentication | Pre-Shared Key |
+| Identity type | FQDN |
+| ESP Encryption | AES-256-GCM |
+| PFS | Group 20 |
+
 ---
 
-## ⚙️ Prerequisites
-- Virtual or physical lab environment  
-- Cisco IOS router (e.g., GNS3/EVE-NG)  
-- OPNsense VM  
-- Palo Alto VM or physical device  
-- Basic networking knowledge (IP addressing, routing, VPNs)  
+## Prerequisites
+
+- Virtual or physical lab environment (GNS3 / EVE-NG / bare metal)
+- Cisco IOS router with IKEv2 support
+- OPNsense VM
+- Palo Alto VM or physical device
+- Routable public IPs between all three peers (or simulated WAN in the lab)
 
 ---
 
-## 🔧 Configuration Steps
+## Step 1 — Cisco IOS Configuration
 
-### Cisco IOS – GRE over IPsec
+Cisco uses `tunnel protection ipsec profile` to bind IPsec to GRE tunnel interfaces. A single IKEv2 profile and IPsec profile covers both peers.
+
 ```shell
 crypto ikev2 proposal IKE-PROPOSAL
  encryption aes-gcm-256
@@ -74,154 +88,218 @@ crypto ikev2 profile IKE-PROFILE-PSK
  authentication remote pre-share
  authentication local pre-share
  keyring local IKE-KEYRING
- 
+
 crypto ipsec transform-set TRS esp-gcm 256
  mode tunnel
- 
+
 crypto ipsec profile CIP-PSK
  set transform-set TRS
  set pfs group20
  set ikev2-profile IKE-PROFILE-PSK
 
 interface Tunnel73
- description NIP to OPN
+ description GRE to OPNsense
  ip address 192.168.73.197 255.255.255.252
  tunnel source 198.51.100.87
  tunnel destination 203.0.113.142
  tunnel protection ipsec profile CIP-PSK
 
 interface Tunnel201
- description NIP to PA
+ description GRE to Palo Alto
  ip address 192.168.201.157 255.255.255.252
  tunnel source 198.51.100.87
  tunnel destination 192.0.2.76
  tunnel protection ipsec profile CIP-PSK
 ```
 
+> Both tunnel interfaces share the same IPsec profile. Cisco matches the correct peer from the keyring based on the destination IP of the GRE tunnel.
+
 ---
 
-### OPNsense – GRE over IPsec
-1. **Phase 1 (VPN > IPsec > Pre-Shared Keys > Add)**
-   - Local Identifier: `PSK.OPN`
+## Step 2 — OPNsense Configuration
+
+OPNsense uses the IKEv2 connections model (strongSwan). GRE is configured separately as a virtual interface on top of the IPsec transport.
+
+### IPsec — Cisco Peer
+
+1. **Pre-Shared Keys** (`VPN → IPsec → Pre-Shared Keys → Add`)
+   - Identifier: `PSK.OPN`
    - Remote Identifier: `PSK.CISCO`
-   - Pre-Shared Key: `IPsec-key`
+   - Pre-Shared Key: `IPSec-key`
    - Type: `PSK`
-2. **Phase 1 (VPN > IPsec > Connections)**  
-   - Proposal: `aes256gcm16-sha384-ecp384 [DH20, NIST EC]` 
-   - Version: `IKEv2` 
-   - Local addresses: `203.0.113.142` 
-   - Remote addresses: `198.51.100.87` (Cisco)  
+
+2. **Phase 1** (`VPN → IPsec → Connections → Add`)
    - Description: `CISCO`
-3. **Phase 1 (VPN > IPsec > Connections > CISCO > Local Authentication)** 
-   - Authentication: `Pre-Shared Key` 
-   - Id: `PSK.OPN` 
-4. **Phase 1 (VPN > IPsec > Connections > CISCO > Remote Authentication)** 
-   - Authentication: `Pre-Shared Key` 
-   - Id: `PSK.CISCO` 
-5. **Phase 2 (VPN > IPsec > Connections > CISCO > Children)**  
+   - Version: `IKEv2`
+   - Local addresses: `203.0.113.142`
+   - Remote addresses: `198.51.100.87`
+   - Proposal: `aes256gcm16-sha384-ecp384`
+
+3. **Local Authentication** (`Connections → CISCO → Local Authentication`)
+   - Method: `Pre-Shared Key`
+   - ID: `PSK.OPN`
+
+4. **Remote Authentication** (`Connections → CISCO → Remote Authentication`)
+   - Method: `Pre-Shared Key`
+   - ID: `PSK.CISCO`
+
+5. **Phase 2 / Child SA** (`Connections → CISCO → Children → Add`)
    - Mode: `Tunnel`
-   - Policies: ✅
-   - ESP proposal: `aes256gcm16-sha384-ecp384 [DH20, NIST EC]` 
-6. **GRE Setup (Interfaces > Devices > GRE)**  
-   - Local Address: `203.0.113.142`  
-   - Remote Address: `198.51.100.87`  
+   - Policies: ✅ enabled
+   - ESP Proposal: `aes256gcm16-sha384-ecp384`
+
+### GRE Interface — Cisco Peer
+
+6. **GRE Device** (`Interfaces → Devices → GRE → Add`)
+   - Local Address: `203.0.113.142`
+   - Remote Address: `198.51.100.87`
    - Tunnel local address: `192.168.73.198`
    - Tunnel remote address: `192.168.73.197`
-   - Tunnel netmask / prefix: `30`
-7. **GRE Setup (Interfaces > Assignments > GRE)**  
-   - Enable: ✅
+   - Tunnel prefix length: `30`
 
-Repeat all steps for the Palo Alto NGFW peer. Make sure to adjust addresses, IDs, and any other parameters accordingly.
+7. **Interface Assignment** (`Interfaces → Assignments`)
+   - Assign the GRE device and enable it
 
-**Remember to create the appropriate firewall rules.**
-When configuring GRE over IPsec, it is essential to ensure that your firewall allows the required traffic. At minimum, you should permit:
+Repeat Steps 1–7 for the Palo Alto peer, adjusting addresses to `192.0.2.76` / `PSK.PA`, tunnel addresses `192.168.144.29/30`, and IDs accordingly.
 
-- **IPsec traffic** (UDP/500 for IKE, UDP/4500 for NAT-T, and ESP protocol if applicable).
-- **GRE protocol** (IP protocol 47) between the tunnel endpoints.
+### Firewall Rules
 
-Without these rules, the tunnel may establish partially or fail to pass GRE-encapsulated traffic.
+At minimum, allow the following on the WAN interface:
+
+| Protocol | Port / Number | Purpose |
+|---|---|---|
+| UDP | 500 | IKE negotiation |
+| UDP | 4500 | IKE NAT-T |
+| IP | 50 (ESP) | IPsec data |
+| IP | 47 (GRE) | GRE encapsulation |
 
 ---
 
-### Palo Alto – GRE over IPsec
-1. **IKE Crypto Profile (Network > Network Profiles > IKE Crypto)**
+## Step 3 — Palo Alto Configuration
+
+Palo Alto natively supports GRE encapsulation inside IPsec tunnels — no separate GRE interface is needed.
+
+### IKE and IPsec Crypto Profiles
+
+1. **IKE Crypto Profile** (`Network → Network Profiles → IKE Crypto → Add`)
    - Name: `IKE-PROPOSAL`
-   - DH GROUP: `group20`
-   - ENCRYPTION: `aes-256-gcm`
-   - AUTHENTICATION: `none`
-2. **IPSec Crypto Profile (Network > Network Profiles > IPSec Crypto)**
-   - Name: `CIP-PSK`
-   - IPSec Protocol: `ESP`
    - DH Group: `group20`
-   - ENCRYPTION: `aes-256-gcm`
-   - AUTHENTICATION: `none`
-3. **IKE Gateway (Network > Network Profiles > IKE Gateways)**  
+   - Encryption: `aes-256-gcm`
+   - Authentication: `none` (implicit with GCM)
+
+2. **IPsec Crypto Profile** (`Network → Network Profiles → IPSec Crypto → Add`)
+   - Name: `CIP-PSK`
+   - Protocol: `ESP`
+   - DH Group: `group20`
+   - Encryption: `aes-256-gcm`
+   - Authentication: `none`
+
+### IKE Gateway — Cisco Peer
+
+3. **IKE Gateway** (`Network → IKE Gateways → Add`)
    - Name: `CISCO`
-   - Version: `IKEv2 only mode` 
-   - Local IP: `192.0.2.76`  
-   - Peer IP: `198.51.100.87` 
-   - Authentication: `Pre-Shared Key` 
-   - Pre-shared Key: `IPSec-key`
-   - Local Identification: `FQDN (hostname)` `PSK.PA`
-   - Remote Identification: `FQDN (hostname)` `PSK.CISCO`
-4. **IKE Gateway (Network > Network Profiles > IKE Gateways > CISCO > Advanced Options)**  
+   - Version: `IKEv2 only mode`
+   - Local IP: `192.0.2.76`
+   - Peer IP: `198.51.100.87`
+   - Authentication: `Pre-Shared Key` — `IPSec-key`
+   - Local ID: `FQDN` — `PSK.PA`
+   - Remote ID: `FQDN` — `PSK.CISCO`
+
+4. **Advanced Options** (`IKE Gateways → CISCO → Advanced`)
    - IKE Crypto Profile: `IKE-PROPOSAL`
-5. **Tunnel (Network > Interfaces > Tunnel)**  
-   - Create `tunnel.201`  
-   - Assign IP: `192.168.201.158/30` 
-6. **IPsec Tunnel (Network > IPsec Tunnels)**  
+
+### Tunnel Interface and IPsec Tunnel
+
+5. **Tunnel Interface** (`Network → Interfaces → Tunnel → Add`)
+   - Name: `tunnel.201`
+   - IP: `192.168.201.158/30`
+
+6. **IPsec Tunnel** (`Network → IPsec Tunnels → Add`)
    - Name: `CISCO`
    - Tunnel Interface: `tunnel.201`
    - Type: `Auto Key`
-   - Address Type: `IPv4`
    - IKE Gateway: `CISCO`
-   - IPSec Crypto Profile: `CIP-PSK`
-   - Show Advanced Options: ✅
+   - IPsec Crypto Profile: `CIP-PSK`
    - Enable Replay Protection: ✅
-   - Add GRE Encapsulation: ✅
+   - **Add GRE Encapsulation: ✅**
 
-Repeat all steps for the OPNsense peer. Make sure to adjust addresses, IDs, and any other parameters accordingly.
+Repeat Steps 3–6 for the OPNsense peer. Adjust addresses to `203.0.113.142` / `PSK.OPN`, create `tunnel.73` with `192.168.144.30/30`.
 
-**Remember to create the appropriate firewall rules.**
-When configuring GRE over IPsec, it is essential to ensure that your firewall allows the required traffic. At minimum, you should permit:
+### Firewall Rules
 
-- **IPsec traffic** (UDP/500 for IKE, UDP/4500 for NAT-T, and ESP protocol if applicable).
-- **GRE protocol** (IP protocol 47) between the tunnel endpoints.
-
-Without these rules, the tunnel may establish partially or fail to pass GRE-encapsulated traffic.
+Allow the same traffic as OPNsense (UDP/500, UDP/4500, ESP, GRE) on the untrust zone.
 
 ---
 
-## ✅ Verification
-- On Cisco:  
-  ```shell
-  show crypto ikev2 sa
-  show crypto ipsec sa
-  ping 192.168.73.198 source 192.168.73.197
-  ping 192.168.201.158 source 192.168.201.157
-  ```
-  
-- On OPNsense:  
-  - VPN > IPsec > Status Overview → should show an **established SA** in Phase 2 
-  - `ping -S 192.168.73.198 192.168.73.197`  
-  - `ping -S 192.168.144.29 192.168.144.30`
-  
-- On Palo Alto:  
-  - Network > IPsec Tunnels → should show green  
-  - `ping source 192.168.144.30 host 192.168.144.29`  
-  - `ping source 192.168.201.158 host 192.168.201.157`  
+## Verification
+
+### Cisco
+
+```shell
+show crypto ikev2 sa
+show crypto ipsec sa
+
+! Ping across GRE tunnels
+ping 192.168.73.198 source 192.168.73.197
+ping 192.168.201.158 source 192.168.201.157
+```
+
+### OPNsense
+
+```shell
+# VPN → IPsec → Status Overview → Phase 2 should show "established"
+
+ping -S 192.168.73.198 192.168.73.197
+ping -S 192.168.144.29 192.168.144.30
+```
+
+### Palo Alto
+
+```shell
+# Network → IPsec Tunnels → status indicators should be green
+
+ping source 192.168.201.158 host 192.168.201.157
+ping source 192.168.144.30 host 192.168.144.29
+```
 
 ---
 
-## 🐞 Troubleshooting
-- **Tunnel up but no ping** → Check firewall rules on OPNsense / Palo Alto  
-- **Routing issues** → Add static routes or enable OSPF/BGP inside GRE  
+## Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---|---|---|
+| IKEv2 SA not establishing | FQDN identity mismatch | Verify `match identity remote fqdn` on Cisco matches the remote FQDN exactly |
+| Phase 1 up, Phase 2 fails | Crypto proposal mismatch | Align ESP proposals across both sides |
+| Tunnel up, ping fails | Firewall blocking GRE (IP/47) | Add permit rule for protocol 47 between tunnel endpoints |
+| Routing not working | No routes over GRE | Add static routes or configure OSPF/BGP inside the GRE tunnel |
+| OPNsense GRE not passing traffic | GRE interface not assigned | Confirm the GRE device is assigned and enabled under Interfaces |
 
 ---
 
-## 👤 Author
-**Przemyslaw Pradela**  
-- 💼 GitHub: [@ppradela](https://github.com/ppradela)
-- 🔗 LinkedIn: [przemyslaw-pradela](https://www.linkedin.com/in/przemyslaw-pradela)
+## Security Notes
+
+- **FQDN-based peer identity** — avoids IP-based matching, which can be spoofed if the WAN IP changes
+- **AES-256-GCM** — authenticated encryption, no separate HMAC needed; `authentication: none` is correct for GCM modes
+- **DH Group 20 (NIST P-384)** — provides 192-bit security level for key exchange
+- **PFS enabled** — each IPsec SA uses an independent DH exchange; compromise of one SA does not expose others
+- **Pre-shared keys** — sufficient for lab use; replace with PKI (certificates) for production deployments
 
 ---
+
+## License
+
+MIT — free to use, modify, and distribute.
+
+---
+
+## Author
+
+**Przemysław Pradela**
+
+Built from a real multivendor lab deployment.
+
+[![GitHub](https://img.shields.io/badge/GitHub-ppradela-181717?logo=github)](https://github.com/ppradela)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Przemysław%20Pradela-0A66C2?logo=linkedin)](https://www.linkedin.com/in/przemyslaw-pradela)
+[![Website](https://img.shields.io/badge/Website-pradela.ovh-4A90D9)](https://pradela.ovh)
+
+Contributions and issue reports welcome.
